@@ -380,7 +380,7 @@ static PyObject *_PylibMC_parse_memcached_value(char *value, size_t size,
 
     /* Decompress value if necessary. */
     if (flags & PYLIBMC_FLAG_ZLIB) {
-        if ((inflated = _PylibMC_Inflate(value, size)) == NULL) {
+        if ((inflated = _PylibMC_Inflate(value + sizeof(uint32_t), size)) == NULL) {
             return NULL;
         }
         value = PyString_AS_STRING(inflated);
@@ -905,6 +905,7 @@ static bool _PylibMC_RunSetCommand(PylibMC_Client* self,
 
 #ifdef USE_ZLIB
         char *compressed_value = NULL;
+        char *compressed_and_len = NULL;
         size_t compressed_len = 0;
 
         if (min_compress && value_len >= min_compress) {
@@ -917,9 +918,16 @@ static bool _PylibMC_RunSetCommand(PylibMC_Client* self,
         if (compressed_value != NULL) {
             /* Will want to change this if this function
              * needs to get back at the old *value at some point */
-            value = compressed_value;
-            value_len = compressed_len;
-            flags |= PYLIBMC_FLAG_ZLIB;
+            compressed_and_len = (char*)malloc(compressed_len + sizeof(uint32_t));
+            if (compressed_and_len != NULL) {
+                uint32_t orig_len = value_len;
+                memcpy(compressed_and_len, &orig_len, sizeof(uint32_t));
+                memcpy(compressed_and_len + sizeof(uint32_t), compressed_value, compressed_len);
+                value = compressed_and_len;
+                value_len = compressed_len + sizeof(uint32_t);
+                flags |= PYLIBMC_FLAG_ZLIB;
+                flags |= PYLIBMC_FLAG_COMPRESSED;
+            }
         }
 #endif
 
@@ -936,6 +944,9 @@ static bool _PylibMC_RunSetCommand(PylibMC_Client* self,
 #ifdef USE_ZLIB
         if (compressed_value != NULL) {
             free(compressed_value);
+        }
+        if (compressed_and_len != NULL) {
+            free(compressed_and_len);
         }
 #endif
 
